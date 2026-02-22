@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand: #EF5350;
+  --brand-2: #E53935;
+  --brand-text: #ffffff;
+  --bg: #ffffff;
+  --bg-2: #f8fafc;
+  --widget-bg: #f3f4f6;
+  --box-bg: #ffffff;
+  --box-border: #e5e7eb;
+  --box-hover: #f9fafb;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --radius: 0.5rem;
+  --logo-url: none;
+  --font-family: system-ui, -apple-system, sans-serif;
+  --dot-group: #22c55e;
+  --dot-contact: #3b82f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Theme-aware list item hover */
+[data-theme-hover]:not([data-selected]):hover {
+  background-color: var(--box-hover) !important;
+}
