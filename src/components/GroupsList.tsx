@@ -2,7 +2,7 @@ import { useWidgetStore } from '../lib/store'
 import type { Group } from '../types'
 
 export function GroupsList() {
-  const { groups, selectedGroupIds, setSelection, setActiveTab, setCurrentThread, groupsLabel } =
+  const { groups, contacts, selectedGroupIds, setSelection, setActiveTab, setCurrentThread, groupsLabel } =
     useWidgetStore()
 
   const filtered = groups
@@ -41,6 +41,9 @@ export function GroupsList() {
               group={g}
               selected={selectedGroupIds.includes(g.externalGroupId)}
               onToggle={() => toggleGroup(g.externalGroupId)}
+              contactCount={contacts.filter((c) =>
+                g.memberExternalUserIds.includes(c.externalUserId)
+              ).length}
             />
           ))
         )}
@@ -53,12 +56,14 @@ function GroupItem({
   group,
   selected,
   onToggle,
+  contactCount,
 }: {
   group: Group
   selected: boolean
   onToggle: () => void
+  contactCount: number
 }) {
-  const count = group.memberExternalUserIds.length
+  const count = contactCount
 
   return (
     <li

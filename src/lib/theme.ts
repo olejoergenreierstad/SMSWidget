@@ -45,6 +45,7 @@ const DEFAULT_THEME: Required<TenantTheme> = {
   widgetBg: '#f3f4f6',
   boxBg: '#ffffff',
   boxBorder: '#e5e7eb',
+  boxHover: '#f1f5f9',
   text: '#0f172a',
   textMuted: '#64748b',
   radius: '0.5rem',

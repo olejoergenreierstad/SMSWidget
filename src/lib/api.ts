@@ -71,3 +71,65 @@ export async function simulateInbound(params: InboundMessageParams): Promise<voi
     body: JSON.stringify(params),
   })
 }
+
+export interface ThreadMessage {
+  messageId: string
+  threadId: string
+  direction: 'outbound' | 'inbound'
+  body: string
+  status: string
+  createdAt: string
+  groupExternalId?: string | null
+}
+
+export async function getThreadMessages(
+  tenantId: string,
+  threadId: string,
+  apiKey?: string | null
+): Promise<ThreadMessage[]> {
+  const base = getApiBase()
+  if (!base) return []
+  const params = new URLSearchParams({ tenantId, threadId })
+  if (apiKey) params.set('apiKey', apiKey)
+  const res = await fetch(`${base}/getThreadMessages?${params}`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data.messages) ? data.messages : []
+}
+
+export async function getGroupMessages(
+  tenantId: string,
+  threadIds: string[],
+  apiKey?: string | null
+): Promise<ThreadMessage[]> {
+  const base = getApiBase()
+  if (!base || threadIds.length === 0) return []
+  const params = new URLSearchParams({ tenantId, threadIds: threadIds.join(',') })
+  if (apiKey) params.set('apiKey', apiKey)
+  const res = await fetch(`${base}/getGroupMessages?${params}`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data.messages) ? data.messages : []
+}
+
+export interface Thread {
+  threadId: string
+  phone: string
+  externalUserId?: string | null
+  lastMessageAt: string
+}
+
+
+export async function getThreads(
+  tenantId: string,
+  apiKey?: string | null
+): Promise<Thread[]> {
+  const base = getApiBase()
+  if (!base) return []
+  const params = new URLSearchParams({ tenantId })
+  if (apiKey) params.set('apiKey', apiKey)
+  const res = await fetch(`${base}/getThreads?${params}`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data.threads) ? data.threads : []
+}

@@ -11,6 +11,7 @@ import {
 } from '../lib/postMessage'
 import { fetchContacts, fetchGroups } from '../lib/hostApi'
 import { fetchNoCodeData } from '../lib/firestoreData'
+import { getThreads } from '../lib/api'
 import { useWidgetStore } from '../lib/store'
 
 const DEFAULT_TENANT = import.meta.env.VITE_DEFAULT_TENANT ?? 'demo'
@@ -23,6 +24,7 @@ export function useWidgetBootstrap() {
     setTenantInstall,
     setToken,
     setHostApiBase,
+    setTenantApiKey,
     setSelection,
     setContacts,
     setGroups,
@@ -51,14 +53,45 @@ export function useWidgetBootstrap() {
     setTenantInstall(safeTenant, safeInstall)
     setNoCode(noCodeParam)
     if (tokenParam) setToken(tokenParam)
+    if (apiKeyParam) setTenantApiKey(apiKeyParam)
     if (hostApiParam) setHostApiBase(hostApiParam)
 
-    // NoCode: load contacts/groups from our Firestore (via Cloud Function)
+    // NoCode: load contacts/groups and threads from our Firestore (via Cloud Function)
+    let threadsInterval: ReturnType<typeof setInterval> | null = null
+    let noCodeCleanup: (() => void) | null = null
     if (noCodeParam) {
-      fetchNoCodeData(safeTenant, apiKeyParam).then(({ contacts, groups }) => {
-        useWidgetStore.getState().setContacts(contacts)
-        useWidgetStore.getState().setGroups(groups)
-      })
+      const loadNoCode = () => {
+        Promise.all([
+          fetchNoCodeData(safeTenant, apiKeyParam),
+          getThreads(safeTenant, apiKeyParam),
+        ]).then(([{ contacts, groups }, threads]) => {
+          const storeThreads = threads.map((t) => ({
+            threadId: t.threadId,
+            phone: t.phone,
+            externalUserId: t.externalUserId ?? undefined,
+            lastMessageAt: t.lastMessageAt,
+          }))
+          useWidgetStore.getState().setThreads(storeThreads)
+          const byPhone = new Set(contacts.map((c) => c.phone.replace(/\D/g, '')))
+          const virtualContacts = threads
+            .filter((t) => !byPhone.has(t.phone.replace(/\D/g, '')))
+            .map((t) => ({
+              externalUserId: t.threadId,
+              name: t.phone,
+              phone: t.phone,
+              email: '',
+              groupIds: [],
+              updatedAt: t.lastMessageAt,
+            }))
+          useWidgetStore.getState().setContacts([...contacts, ...virtualContacts])
+          useWidgetStore.getState().setGroups(groups)
+        })
+      }
+      loadNoCode()
+      threadsInterval = setInterval(loadNoCode, 15000)
+      const onRefreshData = () => loadNoCode()
+      window.addEventListener('sms-widget:refresh-data', onRefreshData)
+      noCodeCleanup = () => window.removeEventListener('sms-widget:refresh-data', onRefreshData)
     }
     // Code: hostApi + token from URL, fetch from host
     else if (hostApiParam && tokenParam) {
@@ -79,7 +112,46 @@ export function useWidgetBootstrap() {
       store.setThemeLabels(theme.groupsLabel ?? 'GRUPPER', theme.privateLabel ?? 'PRIVAT')
     }
     loadThemeWithCache(safeTenant, safeInstall, applyThemeToStore)
-  }, [searchParams, setTenantInstall, setToken, setHostApiBase, setNoCode])
+
+    let onVisible: (() => void) | null = null
+    if (noCodeParam) {
+      onVisible = () => {
+        if (document.visibilityState === 'visible') {
+          Promise.all([
+            fetchNoCodeData(safeTenant, apiKeyParam),
+            getThreads(safeTenant, apiKeyParam),
+          ]).then(([{ contacts, groups }, threads]) => {
+            const storeThreads = threads.map((t) => ({
+              threadId: t.threadId,
+              phone: t.phone,
+              externalUserId: t.externalUserId ?? undefined,
+              lastMessageAt: t.lastMessageAt,
+            }))
+            useWidgetStore.getState().setThreads(storeThreads)
+            const byPhone = new Set(contacts.map((c) => c.phone.replace(/\D/g, '')))
+            const virtualContacts = threads
+              .filter((t) => !byPhone.has(t.phone.replace(/\D/g, '')))
+              .map((t) => ({
+                externalUserId: t.threadId,
+                name: t.phone,
+                phone: t.phone,
+                email: '',
+                groupIds: [],
+                updatedAt: t.lastMessageAt,
+              }))
+            useWidgetStore.getState().setContacts([...contacts, ...virtualContacts])
+            useWidgetStore.getState().setGroups(groups)
+          })
+        }
+      }
+      document.addEventListener('visibilitychange', onVisible)
+    }
+    return () => {
+      if (onVisible) document.removeEventListener('visibilitychange', onVisible)
+      noCodeCleanup?.()
+      if (threadsInterval) clearInterval(threadsInterval)
+    }
+  }, [searchParams, setTenantInstall, setToken, setTenantApiKey, setHostApiBase, setNoCode])
 
   useEffect(() => {
     const unsub = onHostMessage((msg) => {
@@ -87,6 +159,8 @@ export function useWidgetBootstrap() {
         case 'HOST_ACK': {
           setAllowedOrigin(msg.allowedOrigin)
           if (msg.token) setToken(msg.token)
+          const apiKey = msg.configOverrides?.apiKey as string | undefined
+          if (apiKey) setTenantApiKey(apiKey)
           const apiUrl = msg.configOverrides?.hostApi
           const noCodeOverride = msg.configOverrides?.noCode
           if (apiUrl) setHostApiBase(apiUrl)
@@ -96,8 +170,29 @@ export function useWidgetBootstrap() {
           if (noCodeOverride === true) {
             const { tenantId } = useWidgetStore.getState()
             const apiKey = msg.configOverrides?.apiKey as string | undefined
-            fetchNoCodeData(tenantId, apiKey).then(({ contacts, groups }) => {
-              useWidgetStore.getState().setContacts(contacts)
+            Promise.all([
+              fetchNoCodeData(tenantId, apiKey),
+              getThreads(tenantId, apiKey),
+            ]).then(([{ contacts, groups }, threads]) => {
+              const storeThreads = threads.map((t) => ({
+                threadId: t.threadId,
+                phone: t.phone,
+                externalUserId: t.externalUserId ?? undefined,
+                lastMessageAt: t.lastMessageAt,
+              }))
+              useWidgetStore.getState().setThreads(storeThreads)
+              const byPhone = new Set(contacts.map((c) => c.phone.replace(/\D/g, '')))
+              const virtualContacts = threads
+                .filter((t) => !byPhone.has(t.phone.replace(/\D/g, '')))
+                .map((t) => ({
+                  externalUserId: t.threadId,
+                  name: t.phone,
+                  phone: t.phone,
+                  email: '',
+                  groupIds: [],
+                  updatedAt: t.lastMessageAt,
+                }))
+              useWidgetStore.getState().setContacts([...contacts, ...virtualContacts])
               useWidgetStore.getState().setGroups(groups)
             })
           }
@@ -124,6 +219,18 @@ export function useWidgetBootstrap() {
         case 'SET_GROUPS':
           setGroups(msg.groups)
           break
+        case 'REFRESH_MESSAGES': {
+          window.dispatchEvent(
+            new CustomEvent('sms-widget:refresh-messages', {
+              detail: { threadId: msg.threadId, groupId: msg.groupId },
+            })
+          )
+          break
+        }
+        case 'REFRESH_DATA': {
+          window.dispatchEvent(new CustomEvent('sms-widget:refresh-data'))
+          break
+        }
       }
     })
 
@@ -131,7 +238,7 @@ export function useWidgetBootstrap() {
     return () => {
       unsubRef.current?.()
     }
-  }, [setToken, setHostApiBase, setSelection, setContacts, setGroups, setHostAckReceived, setNoCode])
+  }, [setToken, setHostApiBase, setTenantApiKey, setSelection, setContacts, setGroups, setHostAckReceived, setNoCode])
 
   useEffect(() => {
     const { tenantId, installId, widgetReadySent } = useWidgetStore.getState()
@@ -142,3 +249,5 @@ export function useWidgetBootstrap() {
   }, [])
 
 }
+
+export default useWidgetBootstrap

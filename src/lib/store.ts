@@ -53,6 +53,7 @@ interface WidgetState {
   setActiveTab: (tab: TabMode) => void
   setLogoUrl: (url: string | null) => void
   setNoCode: (v: boolean) => void
+  setThemeLabels: (groupsLabel: string, privateLabel: string) => void
   getFilteredContacts: () => Contact[]
   getCurrentThread: () => Thread | null
   getCurrentMessages: () => Message[]
@@ -138,15 +139,20 @@ export const useWidgetStore = create<WidgetState>((set, get) => ({
   },
   setActiveTab: (activeTab) => set({ activeTab }),
   setLogoUrl: (logoUrl) => set({ logoUrl }),
-  setThemeLabels: (groupsLabel, privateLabel) => set({ groupsLabel, privateLabel }),
+  setThemeLabels: (groupsLabel: string, privateLabel: string) => set({ groupsLabel, privateLabel }),
   setNoCode: (v: boolean) => set({ noCode: v }),
 
   getFilteredContacts: () => {
-    const { contacts, selectedGroupIds } = get()
+    const { contacts, threads, selectedGroupIds } = get()
     if (selectedGroupIds.length === 0) return contacts
-    return contacts.filter((c) =>
+    const inGroup = contacts.filter((c) =>
       c.groupIds.some((gid) => selectedGroupIds.includes(gid))
     )
+    const threadPhones = new Set(threads.map((t) => t.phone.replace(/\D/g, '')))
+    const fromThreadsNotInGroup = contacts.filter(
+      (c) => threadPhones.has(c.phone.replace(/\D/g, '')) && !inGroup.some((g) => g.phone === c.phone)
+    )
+    return [...inGroup, ...fromThreadsNotInGroup]
   },
 
   getCurrentThread: () => {

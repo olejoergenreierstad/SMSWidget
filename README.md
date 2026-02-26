@@ -57,7 +57,29 @@ npm run dev
 - **Widget**: http://localhost:5173/embed
 - **Debug / Host Simulator**: http://localhost:5173/debug
 
-### 4. Build
+### 4. Lokal utvikling med Functions-emulator (uten deploy)
+
+For å teste Cloud Functions lokalt uten å deploye:
+
+1. **Kopier credentials til functions:**
+   ```bash
+   cp functions/.env.example functions/.env
+   # Rediger functions/.env – fyll inn SMS_TWILIO_*, SETUP_ADMIN_SECRET osv.
+   ```
+
+2. **Start emulator (terminal 1):**
+   ```bash
+   npm run emulator
+   ```
+
+3. **Start frontend med emulator-URL (terminal 2):**
+   ```bash
+   npm run dev:emulator
+   ```
+
+Frontend bruker da `http://127.0.0.1:5001/smswidget/europe-north1` som API-base. Endringer i `functions/` trenger bare emulator-restart, ikke deploy.
+
+### 5. Build
 
 ```bash
 npm run build
@@ -193,7 +215,25 @@ Optional query params:
 }
 ```
 
-#### 6. Widget → Host: EVENT
+#### 6. Host → Widget: REFRESH_MESSAGES
+
+Når host mottar webhook (f.eks. fra Twilio) om ny innkommende melding, kan host sende denne meldingen for å trigge umiddelbar oppdatering i widgeten – i stedet for å vente på polling:
+
+```json
+{
+  "source": "host",
+  "version": "1.0",
+  "type": "REFRESH_MESSAGES",
+  "threadId": "thread_4712345678",
+  "groupId": "g1"
+}
+```
+
+`threadId` og `groupId` er valgfrie. Hvis begge utelates, oppdateres gjeldende visning. Bruk `threadId` for privat chat, `groupId` for gruppevisning.
+
+**Integrasjon:** Når host mottar webhook på `hostWebhookUrl`, bør host poste denne meldingen til widget-iframe for øyeblikkelig oppdatering. Uten dette poller widgeten hvert 60. sekund som fallback.
+
+#### 7. Widget → Host: EVENT
 
 ```json
 {
@@ -210,7 +250,7 @@ Optional query params:
 }
 ```
 
-#### 7. Widget → Host: ACK (for SET_SELECTION)
+#### 8. Widget → Host: ACK (for SET_SELECTION)
 
 ```json
 {
@@ -310,6 +350,10 @@ Auth: `Authorization: Bearer <token>`
 
 For NoCode, seed Firestore with contacts and groups. See `scripts/seed-noCode-demo.js` for structure.
 
+**Legge til bruker i gruppe manuelt i Firestore:** For at en ny bruker skal vises i gruppen må du oppdatere **begge** steder:
+1. **Kontakt:** Legg til dokument i `tenants/{tenantId}/contacts/` med `externalUserId`, `name`, `phone`, `groupIds` (inkl. gruppens id), `updatedAt`
+2. **Gruppe:** Oppdater gruppens dokument i `tenants/{tenantId}/groups/` – legg til brukerens `externalUserId` i `memberExternalUserIds`-arrayet. Antall deltagere beregnes fra dette feltet.
+
 ### Sikkerhet (tenant + apiKey)
 
 - **apiKey**: Når en tenant opprettes med `setupTenant`, genereres en `apiKey`. Den brukes for `getTenantData` – uten riktig apiKey kan ingen hente contacts/groups for den tenanten.
@@ -319,8 +363,11 @@ For NoCode, seed Firestore with contacts and groups. See `scripts/seed-noCode-de
 ## Cloud Functions
 
 - **GET /getTenantData?tenantId=** – NoCode: returns `{ contacts, groups }` from Firestore
+- **GET /getThreadMessages?tenantId=&threadId=** – Returns `{ messages }` for a thread
+- **GET /getThreads?tenantId=** – Returns `{ threads }` for tenant (sorted by lastMessageAt)
 - **POST /sendMessage** – Send SMS via tenant-configured provider. Body: `{ tenantId, threadId?, toPhone, body, externalUserId?, groupExternalId? }`
 - **POST /inboundMessage** – Simulated inbound webhook. Body: `{ tenantId, fromPhone, body }`
+- **POST /twilioInbound** – Twilio webhook for inbound SMS. Sett denne URL-en i Twilio Console (Messaging → Phone Numbers → Webhook for "A message comes in"): `https://europe-north1-smswidget.cloudfunctions.net/twilioInbound`
 - **POST /setupTenant** – Opprett tenant. Body: `{ tenantId?, name?, noCode?, smsProvider?, smsProviders?, smsFrom? }`
 - **POST /eventsFlush** – Flush eventsOutbox to `hostWebhookUrl`. Body: `{ tenantId, installId? }`
 

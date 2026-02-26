@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useWidgetStore } from '../lib/store'
 import { ComposeBox } from './ComposeBox'
-import { sendMessage } from '../lib/api'
+import { sendMessage, getThreadMessages } from '../lib/api'
 import { sendEvent } from '../lib/postMessage'
 import type { Message } from '../types'
+
+const POLL_INTERVAL_MS = 60_000
 
 export function ConversationPane() {
   const {
@@ -12,14 +14,91 @@ export function ConversationPane() {
     currentThreadId,
     tenantId,
     token: storeToken,
+    tenantApiKey,
     addMessage,
+    setMessages,
+    messagesByThread,
     contacts,
   } = useWidgetStore()
   const token = storeToken ?? 'demo-token'
+  const apiKey = tenantApiKey ?? undefined
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const thread = getCurrentThread()
   const messages = getCurrentMessages()
   const [sending, setSending] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const loadMessages = useCallback(async () => {
+    if (!thread || !currentThreadId) return
+    const tid = thread.threadId
+    setLoading(true)
+    try {
+      const msgs = await getThreadMessages(tenantId, tid, apiKey)
+      const stillViewing = useWidgetStore.getState().currentThreadId === tid
+      if (!stillViewing) return
+      const formatted: Message[] = msgs.map((m) => ({
+        messageId: m.messageId,
+        threadId: m.threadId,
+        direction: m.direction,
+        body: m.body,
+        status: m.status as Message['status'],
+        createdAt: m.createdAt,
+      }))
+      const existing = useWidgetStore.getState().messagesByThread[tid] ?? []
+      const pending = existing.filter((m) => m.status === 'sending')
+      const merged = [...formatted]
+      for (const p of pending) {
+        if (!merged.some((m) => m.messageId === p.messageId)) {
+          merged.push(p)
+        }
+      }
+      merged.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      setMessages(tid, merged)
+    } catch {
+      // Keep existing messages on error
+    } finally {
+      setLoading(false)
+    }
+  }, [tenantId, currentThreadId, thread, apiKey, setMessages])
+
+  useEffect(() => {
+    if (!thread || !currentThreadId) return
+    loadMessages()
+  }, [loadMessages, thread, currentThreadId])
+
+  useEffect(() => {
+    const onRefresh = (e: Event) => {
+      const { threadId } = (e as CustomEvent).detail ?? {}
+      if (threadId === undefined || threadId === currentThreadId) loadMessages()
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && thread && currentThreadId) loadMessages()
+    }
+    window.addEventListener('sms-widget:refresh-messages', onRefresh)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('sms-widget:refresh-messages', onRefresh)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [loadMessages, currentThreadId, thread])
+
+  useEffect(() => {
+    if (!thread || !currentThreadId) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      return
+    }
+    pollRef.current = setInterval(loadMessages, POLL_INTERVAL_MS)
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [loadMessages, thread, currentThreadId])
 
   const contactName =
     thread &&
@@ -30,6 +109,17 @@ export function ConversationPane() {
   const handleSend = async (body: string) => {
     if (!thread) return
     setSending(true)
+    const tempId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    const optimisticMsg: Message = {
+      messageId: tempId,
+      threadId: thread.threadId,
+      direction: 'outbound',
+      body,
+      status: 'sending',
+      createdAt: new Date().toISOString(),
+    }
+    addMessage(thread.threadId, optimisticMsg)
+
     try {
       const res = await sendMessage({
         tenantId,
@@ -48,7 +138,9 @@ export function ConversationPane() {
         status: res.status,
         createdAt: new Date().toISOString(),
       }
-      addMessage(thread.threadId, msg)
+      const current = messagesByThread[thread.threadId] ?? []
+      const updated = [...current.filter((m) => m.messageId !== tempId), msg]
+      setMessages(thread.threadId, updated)
 
       sendEvent('message.sent', {
         messageId: res.messageId,
@@ -59,16 +151,12 @@ export function ConversationPane() {
         status: res.status,
       })
     } catch (err) {
-      const msg: Message = {
-        messageId: `msg_${Date.now()}`,
-        threadId: thread.threadId,
-        direction: 'outbound',
-        body,
-        status: 'failed',
-        createdAt: new Date().toISOString(),
-      }
-      addMessage(thread.threadId, msg)
-      sendEvent('message.status', { messageId: msg.messageId, status: 'failed' })
+      const current = messagesByThread[thread.threadId] ?? []
+      const updated = current.map((m) =>
+        m.messageId === tempId ? { ...m, status: 'failed' as const } : m
+      )
+      setMessages(thread.threadId, updated)
+      sendEvent('message.status', { messageId: tempId, status: 'failed' })
     } finally {
       setSending(false)
     }
@@ -86,10 +174,10 @@ export function ConversationPane() {
   }
 
   return (
-    <div className="flex flex-col flex-1 min-w-0">
+    <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
       {/* Chat header */}
       <div
-        className="border-b px-6 py-4"
+        className="flex-shrink-0 border-b px-6 py-4"
         style={{ borderColor: 'var(--box-border)' }}
       >
         <h2
@@ -109,12 +197,19 @@ export function ConversationPane() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        {loading && messages.length === 0 && (
+          <div className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
+            Laster meldinger...
+          </div>
+        )}
         {messages.map((m) => (
           <MessageBubble key={m.messageId} message={m} contactName={contactName ?? ''} />
         ))}
       </div>
 
-      <ComposeBox onSend={handleSend} disabled={sending} />
+      <div className="flex-shrink-0">
+        <ComposeBox onSend={handleSend} disabled={sending} />
+      </div>
     </div>
   )
 }
@@ -127,6 +222,8 @@ function MessageBubble({
   contactName: string
 }) {
   const isOut = message.direction === 'outbound'
+  const isSending = message.status === 'sending'
+  const isFailed = message.status === 'failed'
   const time = new Date(message.createdAt).toLocaleTimeString('nb-NO', {
     hour: '2-digit',
     minute: '2-digit',
@@ -156,7 +253,9 @@ function MessageBubble({
           className={`text-xs mt-1 ${isOut ? 'text-right' : ''}`}
           style={{ color: 'var(--text-muted)' }}
         >
-          {time}
+          {isSending && 'Sender...'}
+          {isFailed && 'Feilet'}
+          {!isSending && !isFailed && time}
         </div>
       </div>
     </div>

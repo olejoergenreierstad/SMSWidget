@@ -70,7 +70,11 @@ function requireAuth(req) {
  * Uses tenant smsProvider/smsProviders config for region-based routing.
  */
 export const sendMessage = onRequest(
-  { cors: true, region: REGION },
+  {
+    cors: true,
+    region: REGION,
+    secrets: ['SMS_TWILIO_ACCOUNT_SID', 'SMS_TWILIO_AUTH_TOKEN', 'SMS_TWILIO_FROM'],
+  },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.status(405).json({ error: 'Method not allowed' })
@@ -118,6 +122,7 @@ export const sendMessage = onRequest(
         body,
         status: 'queued',
         createdAt: new Date().toISOString(),
+        groupExternalId: groupExternalId || null,
       })
 
       let sendResult
@@ -181,7 +186,108 @@ export const sendMessage = onRequest(
 )
 
 /**
- * POST /api/inboundMessage (simulated webhook)
+ * Internal: save inbound message to Firestore (used by inboundMessage and twilioInbound)
+ */
+async function saveInboundMessage(tenantId, fromPhone, body) {
+  const tid = `thread_${fromPhone.replace(/\D/g, '')}`
+  const threadsRef = db.collection('tenants').doc(tenantId).collection('threads')
+  const threadRef = threadsRef.doc(tid)
+  const threadSnap = await threadRef.get()
+
+  if (!threadSnap.exists) {
+    await threadRef.set({
+      threadId: tid,
+      phone: fromPhone,
+      lastMessageAt: new Date().toISOString(),
+    })
+  }
+
+  const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  await threadRef.collection('messages').doc(messageId).set({
+    messageId,
+    threadId: tid,
+    direction: 'inbound',
+    body,
+    status: 'delivered',
+    createdAt: new Date().toISOString(),
+  })
+
+  await threadRef.update({ lastMessageAt: new Date().toISOString() })
+
+  const eventsRef = db.collection('tenants').doc(tenantId).collection('eventsOutbox')
+  await eventsRef.add({
+    type: 'message.inbound',
+    payload: { messageId, threadId: tid, fromPhone, body },
+    createdAt: new Date().toISOString(),
+    delivered: false,
+  })
+  await eventsRef.add({
+    type: 'thread.updated',
+    payload: { threadId: tid, lastMessageAt: new Date().toISOString() },
+    createdAt: new Date().toISOString(),
+    delivered: false,
+  })
+
+  return { messageId, threadId: tid }
+}
+
+/**
+ * POST /twilioInbound – Twilio webhook for inbound SMS
+ * Twilio sends application/x-www-form-urlencoded: From, To, Body
+ * Finds tenant by smsFrom matching To (our number), saves message
+ */
+export const twilioInbound = onRequest(
+  { cors: false, region: REGION },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method not allowed')
+      return
+    }
+    try {
+      const fromPhone = req.body?.From || req.body?.from
+      const toPhone = req.body?.To || req.body?.to
+      const body = req.body?.Body || req.body?.body || ''
+
+      console.log('twilioInbound: From=', fromPhone, 'To=', toPhone, 'Body=', body?.slice(0, 50))
+
+      if (!fromPhone || !body) {
+        res.status(400).send('Missing From or Body')
+        return
+      }
+
+      const toDigits = String(toPhone || '').replace(/\D/g, '')
+      const tenantsSnap = await db.collection('tenants').get()
+      let tenantId = null
+      for (const doc of tenantsSnap.docs) {
+        const d = doc.data()
+        const smsFrom = d.smsFrom || process.env.SMS_TWILIO_FROM
+        const fromDigits = String(smsFrom || '').replace(/\D/g, '')
+        if (smsFrom && fromDigits === toDigits) {
+          tenantId = doc.id
+          break
+        }
+      }
+      if (!tenantId) {
+        console.warn('twilioInbound: no tenant for To=', toPhone, 'toDigits=', toDigits)
+        res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+        return
+      }
+
+      const result = await saveInboundMessage(tenantId, fromPhone, body)
+      flushEventsToHost(tenantId, null).catch((err) =>
+        console.error('twilioInbound: flushEventsToHost failed', err)
+      )
+
+      res.status(200).contentType('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+    } catch (err) {
+      console.error('twilioInbound error:', err)
+      res.status(500).send('Error')
+    }
+  }
+)
+
+/**
+ * POST /inboundMessage (simulated webhook / manual trigger)
  * Body: { tenantId, fromPhone, body }
  */
 export const inboundMessage = onRequest(
@@ -192,7 +298,6 @@ export const inboundMessage = onRequest(
       return
     }
     try {
-      // TODO: Validate webhook secret
       const { tenantId, fromPhone, body } = req.body || {}
       if (!tenantId || !fromPhone || !body) {
         res.status(400).json({ error: 'Missing tenantId, fromPhone, or body' })
@@ -203,50 +308,12 @@ export const inboundMessage = onRequest(
         return
       }
 
-      const tid = `thread_${fromPhone.replace(/\D/g, '')}`
-      const threadsRef = db.collection('tenants').doc(tenantId).collection('threads')
-      const threadRef = threadsRef.doc(tid)
-      const threadSnap = await threadRef.get()
-
-      if (!threadSnap.exists) {
-        await threadRef.set({
-          threadId: tid,
-          phone: fromPhone,
-          lastMessageAt: new Date().toISOString(),
-        })
-      }
-
-      const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
-      await threadRef.collection('messages').doc(messageId).set({
-        messageId,
-        threadId: tid,
-        direction: 'inbound',
-        body,
-        status: 'delivered',
-        createdAt: new Date().toISOString(),
-      })
-
-      await threadRef.update({ lastMessageAt: new Date().toISOString() })
-
-      const eventsRef = db.collection('tenants').doc(tenantId).collection('eventsOutbox')
-      await eventsRef.add({
-        type: 'message.inbound',
-        payload: { messageId, threadId: tid, fromPhone, body },
-        createdAt: new Date().toISOString(),
-        delivered: false,
-      })
-      await eventsRef.add({
-        type: 'thread.updated',
-        payload: { threadId: tid, lastMessageAt: new Date().toISOString() },
-        createdAt: new Date().toISOString(),
-        delivered: false,
-      })
-
+      const result = await saveInboundMessage(tenantId, fromPhone, body)
       flushEventsToHost(tenantId, null).catch((err) =>
         console.error('inboundMessage: flushEventsToHost failed', err)
       )
 
-      res.status(200).json({ messageId, threadId: tid })
+      res.status(200).json(result)
     } catch (err) {
       console.error('inboundMessage error:', err)
       res.status(500).json({ error: err.message })
@@ -354,6 +421,190 @@ export const setupTenant = onRequest(
       })
     } catch (err) {
       console.error('setupTenant error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+/**
+ * GET /getThreadMessages?tenantId=xxx&threadId=xxx&apiKey=xxx (optional)
+ * Returns messages for a thread, sorted by createdAt.
+ */
+export const getThreadMessages = onRequest(
+  { cors: true, region: REGION },
+  async (req, res) => {
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' })
+      return
+    }
+    try {
+      const tenantId = req.query.tenantId
+      const threadId = req.query.threadId
+      const apiKey = req.query.apiKey
+
+      if (!tenantId || !threadId || !isValidId(tenantId) || !isValidId(threadId)) {
+        res.status(400).json({ error: 'Invalid tenantId or threadId' })
+        return
+      }
+
+      const tenantRef = db.collection('tenants').doc(tenantId)
+      const tenantSnap = await tenantRef.get()
+      const tenantData = tenantSnap.exists ? tenantSnap.data() : {}
+
+      if (tenantData.apiKey && tenantData.apiKey !== apiKey) {
+        res.status(403).json({ error: 'Invalid or missing apiKey' })
+        return
+      }
+
+      const messagesSnap = await tenantRef
+        .collection('threads')
+        .doc(threadId)
+        .collection('messages')
+        .orderBy('createdAt', 'asc')
+        .get()
+
+      const messages = messagesSnap.docs.map((d) => {
+        const data = d.data()
+        return {
+          messageId: data.messageId ?? d.id,
+          threadId: data.threadId ?? threadId,
+          direction: data.direction ?? 'outbound',
+          body: data.body ?? '',
+          status: data.status ?? 'delivered',
+          createdAt: data.createdAt ?? '',
+          groupExternalId: data.groupExternalId ?? null,
+        }
+      })
+
+      res.status(200).json({ messages })
+    } catch (err) {
+      console.error('getThreadMessages error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+/**
+ * GET /getGroupMessages?tenantId=xxx&threadIds=id1,id2,id3&apiKey=xxx (optional)
+ * Returns merged messages from multiple threads, sorted by createdAt.
+ * Reduces parallel requests when loading group view.
+ */
+export const getGroupMessages = onRequest(
+  { cors: true, region: REGION },
+  async (req, res) => {
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' })
+      return
+    }
+    try {
+      const tenantId = req.query.tenantId
+      const threadIdsParam = req.query.threadIds
+      const apiKey = req.query.apiKey
+
+      if (!tenantId || !threadIdsParam || !isValidId(tenantId)) {
+        res.status(400).json({ error: 'Invalid tenantId or threadIds' })
+        return
+      }
+
+      const threadIds = String(threadIdsParam)
+        .split(',')
+        .map((s) => s.trim())
+        .filter((id) => id && isValidId(id))
+        .slice(0, 50)
+
+      if (threadIds.length === 0) {
+        res.status(200).json({ messages: [] })
+        return
+      }
+
+      const tenantRef = db.collection('tenants').doc(tenantId)
+      const tenantSnap = await tenantRef.get()
+      const tenantData = tenantSnap.exists ? tenantSnap.data() : {}
+
+      if (tenantData.apiKey && tenantData.apiKey !== apiKey) {
+        res.status(403).json({ error: 'Invalid or missing apiKey' })
+        return
+      }
+
+      const allMessages = []
+      for (const threadId of threadIds) {
+        const snap = await tenantRef
+          .collection('threads')
+          .doc(threadId)
+          .collection('messages')
+          .orderBy('createdAt', 'asc')
+          .get()
+        for (const d of snap.docs) {
+          const data = d.data()
+          allMessages.push({
+            messageId: data.messageId ?? d.id,
+            threadId: data.threadId ?? threadId,
+            direction: data.direction ?? 'outbound',
+            body: data.body ?? '',
+            status: data.status ?? 'delivered',
+            createdAt: data.createdAt ?? '',
+            groupExternalId: data.groupExternalId ?? null,
+          })
+        }
+      }
+      allMessages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+      res.status(200).json({ messages: allMessages })
+    } catch (err) {
+      console.error('getGroupMessages error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+/**
+ * GET /getThreads?tenantId=xxx&apiKey=xxx (optional)
+ * Returns threads for tenant, sorted by lastMessageAt desc.
+ */
+export const getThreads = onRequest(
+  { cors: true, region: REGION },
+  async (req, res) => {
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' })
+      return
+    }
+    try {
+      const tenantId = req.query.tenantId
+      const apiKey = req.query.apiKey
+
+      if (!tenantId || !isValidId(tenantId)) {
+        res.status(400).json({ error: 'Invalid tenantId' })
+        return
+      }
+
+      const tenantRef = db.collection('tenants').doc(tenantId)
+      const tenantSnap = await tenantRef.get()
+      const tenantData = tenantSnap.exists ? tenantSnap.data() : {}
+
+      if (tenantData.apiKey && tenantData.apiKey !== apiKey) {
+        res.status(403).json({ error: 'Invalid or missing apiKey' })
+        return
+      }
+
+      const threadsSnap = await tenantRef
+        .collection('threads')
+        .orderBy('lastMessageAt', 'desc')
+        .limit(100)
+        .get()
+
+      const threads = threadsSnap.docs.map((d) => {
+        const data = d.data()
+        return {
+          threadId: data.threadId ?? d.id,
+          phone: data.phone ?? '',
+          externalUserId: data.externalUserId ?? null,
+          lastMessageAt: data.lastMessageAt ?? '',
+        }
+      })
+
+      res.status(200).json({ threads })
+    } catch (err) {
+      console.error('getThreads error:', err)
       res.status(500).json({ error: err.message })
     }
   }

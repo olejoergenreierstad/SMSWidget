@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:emulator": "vite --mode emulator",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "emulator": "firebase emulators:start --only functions"
   },
   "dependencies": {
     "firebase": "^11.0.0",

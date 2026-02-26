@@ -5,6 +5,8 @@ import {
   createSetContacts,
   createSetGroups,
   createSetSelection,
+  createRefreshMessages,
+  createRefreshData,
 } from '../lib/postMessage'
 import { setupTenant } from '../lib/setupApi'
 import { fetchNoCodeData } from '../lib/firestoreData'
@@ -219,7 +221,10 @@ export function Debug() {
 
   const handleHandshake = () => {
     sendToWidget(
-      createHostAck(window.location.origin, 'demo-token-123', { hostApi: undefined })
+      createHostAck(window.location.origin, tenantApiKey ?? 'demo-token-123', {
+        hostApi: undefined,
+        apiKey: tenantApiKey ?? undefined,
+      })
     )
   }
 
@@ -289,9 +294,10 @@ export function Debug() {
 
   const handleIframeLoad = async () => {
     sendToWidget(
-      createHostAck(window.location.origin, 'demo-token-123', {
+      createHostAck(window.location.origin, tenantApiKey ?? 'demo-token-123', {
         hostApi: undefined,
         noCode: noCode || undefined,
+        apiKey: tenantApiKey ?? undefined,
       })
     )
     // Code mode: push contacts/groups from host.
@@ -444,7 +450,7 @@ export function Debug() {
               src={embedUrl}
               title="SMS Widget"
               className="flex-1 w-full min-h-0 border border-gray-200 rounded-lg"
-              sandbox="allow-scripts allow-same-origin"
+              sandbox="allow-scripts allow-same-origin allow-forms"
               onLoad={handleIframeLoad}
             />
           </div>
@@ -638,6 +644,19 @@ export function Debug() {
                     >
                       SET_SELECTION
                     </button>
+                    <button
+                      onClick={() => sendToWidget(createRefreshMessages())}
+                      className="px-3 py-1.5 bg-amber-600 text-white rounded text-sm font-medium hover:bg-amber-700"
+                    >
+                      REFRESH_MESSAGES
+                    </button>
+                    <button
+                      onClick={() => sendToWidget(createRefreshData())}
+                      className="px-3 py-1.5 bg-teal-600 text-white rounded text-sm font-medium hover:bg-teal-700"
+                      title="Hent contacts/groups på nytt fra Firestore (noCode)"
+                    >
+                      REFRESH_DATA
+                    </button>
                   </div>
                   <pre className="text-xs bg-white p-2 rounded overflow-auto max-h-32 border border-gray-200">
                     {JSON.stringify(
@@ -683,3 +702,5 @@ export function Debug() {
     </div>
   )
 }
+
+export default Debug

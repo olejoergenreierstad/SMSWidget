@@ -25,7 +25,7 @@ export interface Thread {
   lastMessageAt: string
 }
 
-export type MessageStatus = 'queued' | 'sent' | 'delivered' | 'failed'
+export type MessageStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed'
 export type MessageDirection = 'outbound' | 'inbound'
 
 export interface Message {
@@ -90,6 +90,16 @@ export interface SetGroupsMessage extends BaseMessage {
   groups: Group[]
 }
 
+export interface RefreshMessagesMessage extends BaseMessage {
+  type: 'REFRESH_MESSAGES'
+  threadId?: string
+  groupId?: string
+}
+
+export interface RefreshDataMessage extends BaseMessage {
+  type: 'REFRESH_DATA'
+}
+
 export interface EventMessage extends BaseMessage {
   type: 'EVENT'
   eventType: EventType
@@ -106,6 +116,8 @@ export type HostToWidgetMessage =
   | SetSelectionMessage
   | SetContactsMessage
   | SetGroupsMessage
+  | RefreshMessagesMessage
+  | RefreshDataMessage
 
 export type WidgetToHostMessage =
   | WidgetReadyMessage

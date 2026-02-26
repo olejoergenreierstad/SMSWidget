@@ -163,3 +163,21 @@ export function createSetGroups(groups: Group[]) {
     groups,
   }
 }
+
+export function createRefreshMessages(threadId?: string, groupId?: string) {
+  return {
+    source: 'host',
+    version: '1.0',
+    type: 'REFRESH_MESSAGES',
+    threadId,
+    groupId,
+  }
+}
+
+export function createRefreshData() {
+  return {
+    source: 'host',
+    version: '1.0',
+    type: 'REFRESH_DATA',
+  }
+}

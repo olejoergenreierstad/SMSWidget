@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Embed } from './pages/Embed'
-import { Debug } from './pages/Debug'
+import Debug from './pages/Debug'
 
 function App() {
   return (
