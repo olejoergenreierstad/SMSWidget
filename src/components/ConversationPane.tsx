@@ -28,6 +28,13 @@ export function ConversationPane() {
   const messages = getCurrentMessages()
   const [sending, setSending] = useState(false)
   const [loading, setLoading] = useState(false)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
+  }, [])
 
   const loadMessages = useCallback(async () => {
     if (!thread || !currentThreadId) return
@@ -46,6 +53,10 @@ export function ConversationPane() {
         createdAt: m.createdAt,
       }))
       const existing = useWidgetStore.getState().messagesByThread[tid] ?? []
+      const existingIds = new Set(existing.map((m) => m.messageId))
+      const newInbound = formatted.filter(
+        (m) => m.direction === 'inbound' && !existingIds.has(m.messageId)
+      )
       const pending = existing.filter((m) => m.status === 'sending')
       const merged = [...formatted]
       for (const p of pending) {
@@ -55,6 +66,19 @@ export function ConversationPane() {
       }
       merged.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
       setMessages(tid, merged)
+      // Don't treat the initial load as "new messages" for the host.
+      if (existing.length > 0) {
+        for (const m of newInbound) {
+          sendEvent('message.inbound', {
+            messageId: m.messageId,
+            threadId: tid,
+            fromPhone: thread.phone,
+            externalUserId: thread.externalUserId,
+            body: m.body,
+            createdAt: m.createdAt,
+          })
+        }
+      }
     } catch {
       // Keep existing messages on error
     } finally {
@@ -162,6 +186,18 @@ export function ConversationPane() {
     }
   }
 
+  useEffect(() => {
+    if (!currentThreadId) return
+    stickToBottomRef.current = true
+    requestAnimationFrame(() => scrollToBottom('auto'))
+  }, [currentThreadId, scrollToBottom])
+
+  useEffect(() => {
+    if (!currentThreadId) return
+    if (!stickToBottomRef.current) return
+    requestAnimationFrame(() => scrollToBottom('smooth'))
+  }, [messages.length, currentThreadId, scrollToBottom])
+
   if (!currentThreadId) {
     return (
       <div
@@ -196,7 +232,16 @@ export function ConversationPane() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-6 py-4 space-y-4"
+        onScroll={() => {
+          const el = scrollRef.current
+          if (!el) return
+          const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+          stickToBottomRef.current = distanceToBottom < 80
+        }}
+      >
         {loading && messages.length === 0 && (
           <div className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
             Laster meldinger...
@@ -205,6 +250,7 @@ export function ConversationPane() {
         {messages.map((m) => (
           <MessageBubble key={m.messageId} message={m} contactName={contactName ?? ''} />
         ))}
+        <div ref={bottomRef} />
       </div>
 
       <div className="flex-shrink-0">

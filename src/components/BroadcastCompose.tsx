@@ -42,6 +42,15 @@ export function BroadcastCompose() {
   const [replies, setReplies] = useState<GroupReply[]>([])
   const [loadingReplies, setLoadingReplies] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
+  const seenInboundIdsRef = useRef<Set<string>>(new Set())
+  const inboundInitializedRef = useRef(false)
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    bottomRef.current?.scrollIntoView({ behavior, block: 'end' })
+  }, [])
 
   const loadGroupReplies = useCallback(async () => {
     if (selectedGroupIds.length === 0 || groupContacts.length === 0) {
@@ -58,6 +67,21 @@ export function BroadcastCompose() {
       for (const m of msgs) {
         const contact = threadToContact.get(m.threadId)
         if (m.direction === 'inbound' && contact) {
+          if (!seenInboundIdsRef.current.has(m.messageId)) {
+            seenInboundIdsRef.current.add(m.messageId)
+            // Don't treat the initial load as "new messages" for the host.
+            if (inboundInitializedRef.current) {
+              sendEvent('message.inbound', {
+                messageId: m.messageId,
+                threadId: m.threadId,
+                groupExternalId: selectedGroupIds[0] ?? undefined,
+                fromPhone: contact.phone,
+                externalUserId: contact.externalUserId,
+                body: m.body,
+                createdAt: m.createdAt,
+              })
+            }
+          }
           merged.push({
             ...m,
             contactName: contact.name,
@@ -91,12 +115,24 @@ export function BroadcastCompose() {
         merged.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
         return merged
       })
+      inboundInitializedRef.current = true
     } catch {
       setReplies([])
     } finally {
       setLoadingReplies(false)
     }
   }, [tenantId, selectedGroupIds, groupContacts, apiKey])
+
+  useEffect(() => {
+    if (selectedGroupIds.length === 0) return
+    stickToBottomRef.current = true
+    requestAnimationFrame(() => scrollToBottom('auto'))
+  }, [selectedGroupIds, scrollToBottom])
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) return
+    requestAnimationFrame(() => scrollToBottom('smooth'))
+  }, [replies.length, scrollToBottom])
 
   useEffect(() => {
     loadGroupReplies()
@@ -228,7 +264,16 @@ export function BroadcastCompose() {
       </div>
 
       {/* Svar fra gruppemedlemmer */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4"
+        onScroll={() => {
+          const el = scrollRef.current
+          if (!el) return
+          const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+          stickToBottomRef.current = distanceToBottom < 80
+        }}
+      >
         {loadingReplies && replies.length === 0 && (
           <div className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
             Laster svar...
@@ -310,6 +355,7 @@ export function BroadcastCompose() {
             </div>
           )
         })}
+        <div ref={bottomRef} />
       </div>
 
       {/* Meldingsboks nederst */}

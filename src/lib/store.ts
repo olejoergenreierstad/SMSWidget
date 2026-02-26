@@ -34,6 +34,7 @@ interface WidgetState {
   noCode: boolean
   groupsLabel: string
   privateLabel: string
+  unreadGroupIds: string[]
 
   // Actions
   setTenantInstall: (tenantId: string, installId: string) => void
@@ -54,6 +55,9 @@ interface WidgetState {
   setLogoUrl: (url: string | null) => void
   setNoCode: (v: boolean) => void
   setThemeLabels: (groupsLabel: string, privateLabel: string) => void
+  markGroupUnread: (groupId: string) => void
+  clearGroupUnread: (groupId: string) => void
+  clearAllGroupUnread: () => void
   getFilteredContacts: () => Contact[]
   getCurrentThread: () => Thread | null
   getCurrentMessages: () => Message[]
@@ -79,6 +83,7 @@ export const useWidgetStore = create<WidgetState>((set, get) => ({
   noCode: false,
   groupsLabel: 'GRUPPER',
   privateLabel: 'PRIVAT',
+  unreadGroupIds: [],
 
   setTenantInstall: (tenantId, installId) => set({ tenantId, installId }),
   setWidgetReadySent: (v) => set({ widgetReadySent: v }),
@@ -141,6 +146,14 @@ export const useWidgetStore = create<WidgetState>((set, get) => ({
   setLogoUrl: (logoUrl) => set({ logoUrl }),
   setThemeLabels: (groupsLabel: string, privateLabel: string) => set({ groupsLabel, privateLabel }),
   setNoCode: (v: boolean) => set({ noCode: v }),
+  markGroupUnread: (groupId: string) =>
+    set((s) => {
+      if (s.unreadGroupIds.includes(groupId)) return s
+      return { unreadGroupIds: [...s.unreadGroupIds, groupId] }
+    }),
+  clearGroupUnread: (groupId: string) =>
+    set((s) => ({ unreadGroupIds: s.unreadGroupIds.filter((id) => id !== groupId) })),
+  clearAllGroupUnread: () => set({ unreadGroupIds: [] }),
 
   getFilteredContacts: () => {
     const { contacts, threads, selectedGroupIds } = get()

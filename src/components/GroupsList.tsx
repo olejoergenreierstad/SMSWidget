@@ -1,13 +1,30 @@
 import { useWidgetStore } from '../lib/store'
+import { sendEvent } from '../lib/postMessage'
 import type { Group } from '../types'
 
 export function GroupsList() {
-  const { groups, contacts, selectedGroupIds, setSelection, setActiveTab, setCurrentThread, groupsLabel } =
+  const {
+    groups,
+    contacts,
+    selectedGroupIds,
+    setSelection,
+    setActiveTab,
+    setCurrentThread,
+    groupsLabel,
+    unreadGroupIds,
+    clearGroupUnread,
+  } =
     useWidgetStore()
 
   const filtered = groups
 
   const toggleGroup = (id: string) => {
+    clearGroupUnread(id)
+    const { unreadGroupIds } = useWidgetStore.getState()
+    sendEvent('thread.updated', {
+      unreadGroupsCount: unreadGroupIds.length,
+      unreadGroupIds,
+    })
     const next = selectedGroupIds.includes(id) ? [] : [id]
     setSelection(next, [])
     setCurrentThread(null)
@@ -16,7 +33,7 @@ export function GroupsList() {
 
   return (
     <div
-      className="rounded-lg p-4 shadow-sm"
+      className="rounded-lg p-4 shadow-sm flex flex-col min-h-0 flex-1"
       style={{
         backgroundColor: 'var(--box-bg)',
         borderWidth: '1px',
@@ -29,7 +46,7 @@ export function GroupsList() {
       >
         {groupsLabel}
       </h3>
-      <ul className="space-y-1 max-h-64 overflow-y-auto">
+      <ul className="space-y-1 flex-1 min-h-0 overflow-y-auto">
         {filtered.length === 0 ? (
           <li className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>
             Ingen grupper
@@ -44,6 +61,7 @@ export function GroupsList() {
               contactCount={contacts.filter((c) =>
                 g.memberExternalUserIds.includes(c.externalUserId)
               ).length}
+              unread={unreadGroupIds.includes(g.externalGroupId)}
             />
           ))
         )}
@@ -57,11 +75,13 @@ function GroupItem({
   selected,
   onToggle,
   contactCount,
+  unread,
 }: {
   group: Group
   selected: boolean
   onToggle: () => void
   contactCount: number
+  unread: boolean
 }) {
   const count = contactCount
 
@@ -83,7 +103,14 @@ function GroupItem({
             backgroundColor: selected ? 'var(--brand-text)' : 'var(--dot-group)',
           }}
         />
-        <span className="text-sm font-medium">{group.name}</span>
+        <span className="text-sm font-medium truncate">{group.name}</span>
+        {unread && (
+          <span
+            className="ml-auto h-2.5 w-2.5 rounded-full flex-shrink-0"
+            style={{ backgroundColor: selected ? 'var(--brand-text)' : 'var(--brand)' }}
+            title="Ny melding"
+          />
+        )}
       </div>
       <div
         className="text-xs ml-4"

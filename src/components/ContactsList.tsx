@@ -16,7 +16,7 @@ export function ContactsList() {
 
   return (
     <div
-      className="rounded-lg p-4 shadow-sm"
+      className="rounded-lg p-4 shadow-sm flex flex-col min-h-0 flex-1"
       style={{
         backgroundColor: 'var(--box-bg)',
         borderWidth: '1px',
@@ -35,7 +35,7 @@ export function ContactsList() {
           placeholder="Søk kontakter..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-3 py-2 text-sm rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--brand)] resize-none"
+          className="w-full px-3 py-2 text-sm rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--brand)] resize-none flex-shrink-0"
           style={{
             borderWidth: '1px',
             borderColor: 'var(--box-border)',
@@ -44,7 +44,7 @@ export function ContactsList() {
           }}
         />
       )}
-      <ul className="space-y-1 max-h-64 overflow-y-auto">
+      <ul className="space-y-1 flex-1 min-h-0 overflow-y-auto">
         {filtered.length === 0 ? (
           <li className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>
             Ingen kontakter

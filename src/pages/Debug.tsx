@@ -162,6 +162,7 @@ export function Debug() {
   const [adminOpen, setAdminOpen] = useState(true)
   const [othAdminOpen, setOthAdminOpen] = useState(true)
   const [debugOpen, setDebugOpen] = useState(true)
+  const [smsBadgeCount, setSmsBadgeCount] = useState(0)
   const [widgetOrigin] = useState(
     () => import.meta.env.VITE_WIDGET_ORIGIN ?? 'http://localhost:5173'
   )
@@ -206,6 +207,14 @@ export function Debug() {
       if (!data || typeof data !== 'object') return
       if (data.source === 'sms-widget') {
         setMessages((m) => [...m, { dir: 'from-widget', msg: data }])
+        const maybe = data as { type?: string; eventType?: string; payload?: Record<string, unknown> }
+        if (maybe.type === 'EVENT' && maybe.eventType === 'thread.updated') {
+          const unread = maybe.payload?.unreadGroupsCount
+          if (typeof unread === 'number') setSmsBadgeCount(unread)
+        } else if (maybe.type === 'EVENT' && maybe.eventType === 'message.inbound') {
+          // Fallback if widget doesn't send unread count yet
+          setSmsBadgeCount((c) => c + 1)
+        }
       }
     }
     window.addEventListener('message', handler)
@@ -383,9 +392,18 @@ export function Debug() {
                       <a
                         href="#"
                         className="flex items-center gap-3 px-4 py-2 bg-red-50 text-red-600 rounded-r"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          setSmsBadgeCount(0)
+                        }}
                       >
                         <IconMessage />
                         <span>SMS</span>
+                        {smsBadgeCount > 0 && (
+                          <span className="ml-auto min-w-5 h-5 px-1.5 rounded-full bg-red-600 text-white text-[10px] leading-5 text-center font-semibold">
+                            {smsBadgeCount > 99 ? '99+' : smsBadgeCount}
+                          </span>
+                        )}
                       </a>
                       <a href="#" className="flex items-center gap-3 px-4 py-2 text-gray-700 hover:bg-gray-50">
                         <IconImage />
